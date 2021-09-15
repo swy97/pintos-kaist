@@ -28,6 +28,8 @@ typedef int tid_t;
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
 
+#define UINT64MAX 18446744073709551615;
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -95,6 +97,9 @@ struct thread {
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
 
+	uint64_t tick_to_be_awakened;
+
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -108,6 +113,10 @@ struct thread {
 	struct intr_frame tf;               /* Information for switching */
 	unsigned magic;                     /* Detects stack overflow. */
 };
+
+extern struct list sleeping_list;
+
+extern uint64_t next_tick_to_awaken;
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -142,5 +151,13 @@ int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
 void do_iret (struct intr_frame *tf);
+
+void go_sleep(uint64_t ticktosleep, struct thread *curr);
+void update_next_tick_to_awaken(void);
+static void examinereadylist(void);
+static void examinesleeplist(void);
+
+bool cmp(struct list_elem *a, struct list_elem *b, void *aux);
+void yield_to_max_priority_thread(void);
 
 #endif /* threads/thread.h */

@@ -28,6 +28,11 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+//added
+struct list sleeping_list;
+
+uint64_t next_tick_to_awaken;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -109,6 +114,7 @@ thread_init (void) {
 	lock_init (&tid_lock);
 	list_init (&ready_list);
 	list_init (&destruction_req);
+	list_init (&sleeping_list);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread ();
@@ -240,8 +246,9 @@ thread_unblock (struct thread *t) {
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
+	list_insert_ordered (&ready_list, &t->elem, &cmp, NULL);
 	t->status = THREAD_READY;
+	//yield_to_max_priority_thread();
 	intr_set_level (old_level);
 }
 
@@ -303,7 +310,8 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		//list_insert_ordered (&ready_list, &curr->elem, &cmp, NULL);
+		list_push_back(&ready_list, %curr->elem);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -312,6 +320,7 @@ thread_yield (void) {
 void
 thread_set_priority (int new_priority) {
 	thread_current ()->priority = new_priority;
+	yield_to_max_priority_thread();
 }
 
 /* Returns the current thread's priority. */
@@ -587,4 +596,78 @@ allocate_tid (void) {
 	lock_release (&tid_lock);
 
 	return tid;
+}
+
+
+//added
+void go_sleep(uint64_t ticktosleep, struct thread *curr){
+	if (curr != idle_thread){
+		list_push_back (&sleeping_list, &curr->elem);
+		curr -> tick_to_be_awakened = ticktosleep;
+		//printf("going sleep until %llu tick\n", curr -> tick_to_be_awakened);
+		update_next_tick_to_awaken();
+		thread_block();
+	}
+}
+
+void update_next_tick_to_awaken(void){
+	struct list_elem *e;
+	next_tick_to_awaken = UINT64MAX;
+	for (e = list_begin (&sleeping_list); e != list_end (&sleeping_list); e = list_next (e)) {
+		struct thread *cur = list_entry (e, struct thread, elem);
+		uint64_t etick = cur -> tick_to_be_awakened;
+		next_tick_to_awaken = next_tick_to_awaken > etick ? etick : next_tick_to_awaken;
+	}
+}
+
+void awaken_on_demand(uint64_t ticks){
+	examinesleeplist();
+	examinereadylist();
+	if(ticks >= next_tick_to_awaken){
+		struct list_elem *e;
+		for (e = list_begin (&sleeping_list); e != list_end (&sleeping_list);) {
+			struct thread *cur = list_entry (e, struct thread, elem);
+			if(ticks >= cur -> tick_to_be_awakened){
+				e = list_next (e);
+				list_remove(&cur->elem);
+				thread_unblock(cur);
+				examinereadylist();
+			}
+			else e = list_next (e);
+		}
+		update_next_tick_to_awaken();
+	}
+}
+
+static void examinesleeplist(void){
+	printf("[examinesleeplist]head: 0x%x(next: 0x%x), tail: 0x%x(prev: 0x%x)\n", &sleeping_list.head, sleeping_list.head.next, &sleeping_list.tail, sleeping_list.tail.prev);
+	struct list_elem *e;
+	for (e = list_begin (&sleeping_list); e != list_end (&sleeping_list); e = list_next (e)) {
+		struct thread *cur = list_entry (e, struct thread, elem);
+		printf("[thread %d] add: 0x%x, prev: 0x%x, next: 0x%x, wakeuptick:%llu\n", cur->tid, e, e->prev, e->next, cur->tick_to_be_awakened);
+	}
+}
+
+static void examinereadylist(void){
+	printf("[examinereadylist]head: 0x%x(next: 0x%x), tail: 0x%x(prev: 0x%x)\n", &ready_list.head, ready_list.head.next, &ready_list.tail, ready_list.tail.prev);
+	struct list_elem *e;
+	for (e = list_begin (&ready_list); e != list_end (&ready_list); e = list_next (e)) {
+		struct thread *cur = list_entry (e, struct thread, elem);
+		printf("[thread %d] priority: %d, addr: 0x%x, prev: 0x%x, next: 0x%x\n", cur->priority, cur->tid, e, e->prev, e->next);
+	}
+}
+
+bool cmp(struct list_elem *a, struct list_elem *b, void *aux UNUSED){
+	struct thread *ta, *tb;
+	ta = list_entry (a, struct thread, elem);
+	tb = list_entry (b, struct thread, elem);
+	return ta->priority > tb->priority;
+}
+
+void yield_to_max_priority_thread(void){
+	if(!list_empty(&ready_list)) {
+		if(thread_current()->priority < list_entry(list_begin(&ready_list), struct thread, elem)->priority) {
+			thread_yield();
+		}
+	}
 }
